@@ -23,9 +23,9 @@ class AverageMeter(object):
 
 def preprocess_batch(batch):
     batch_size = batch[0].shape[0]
-    net_in = batch[0].reshape(batch_size, 28 * 28)
-    net_in = net_in
-    return net_in.cuda()
+    net_in = batch[0].reshape(batch_size, 28 * 28).cuda()
+    net_in = 2*(net_in - 0.5)
+    return net_in
 
 
 def train_D_batch(batch):
@@ -33,13 +33,12 @@ def train_D_batch(batch):
     batch_size = batch.shape[0]  # we expect a batch of [batch_size, 28*28]
 
     # Train the discriminator on the true example
-    D_out = D(batch)
-    loss = loss_function(D_out, torch.ones(batch_size, 1).cuda())  # the dataset examples are all real examples (1)
+    loss = loss_function(D(batch), torch.ones(batch_size, 1).cuda())  # the dataset examples are all real examples (1)
 
     # Train the discriminator on generated examples
     generated = G(torch.randn(batch_size, 100).cuda())
-    D_out = D(generated)
-    loss = loss + loss_function(D_out, torch.zeros(batch_size, 1).cuda())  # we want D to say that the examples are fake
+    # we want D to say that the examples are fake
+    loss = loss + loss_function(D(generated), torch.zeros(batch_size, 1).cuda())
     loss.backward()
     D_optimiser.step()
 
@@ -57,37 +56,39 @@ def train_G_batch(batch):
     return loss.item()
 
 
-train_dataset = MNIST(root='./mnist_data/', train=True, download=True,
-                      transform=transforms.ToTensor())
-train_loader = DataLoader(train_dataset, batch_size=2048, num_workers=6, shuffle=True)
+if __name__ == '__main__':
+    train_dataset = MNIST(root='./mnist_data/', train=True, download=True,
+                          transform=transforms.ToTensor())
+    train_loader = DataLoader(train_dataset, batch_size=1024, num_workers=6, shuffle=True)
 
-G = Generator().cuda()
-D = Discriminator().cuda()
+    G = Generator().train().cuda()
+    D = Discriminator().train().cuda()
 
-loss_function = torch.nn.BCELoss()
-G_optimiser = torch.optim.Adam(G.parameters(), lr=1e-4)
-D_optimiser = torch.optim.Adam(D.parameters(), lr=1e-4)
+    loss_function = torch.nn.BCELoss()
+    G_optimiser = torch.optim.Adam(G.parameters(), lr=1e-4)
+    D_optimiser = torch.optim.Adam(D.parameters(), lr=1e-4)
 
-EPOCHS = 50
-K = 1
+    EPOCHS = 50
+    K = 1
 
-for epoch in range(1, EPOCHS+1):
-    D_loss, G_loss = AverageMeter(), AverageMeter()
-    for idx, batch in enumerate(train_loader):
-        x = preprocess_batch(batch)
-        D_loss_batch = train_D_batch(x)
-        D_loss.update(D_loss_batch)
+    for epoch in range(1, EPOCHS+1):
+        D_loss, G_loss = AverageMeter(), AverageMeter()
+        for idx, b in enumerate(train_loader):
+            x = preprocess_batch(b)
+            D_loss_batch = train_D_batch(x)
+            D_loss.update(D_loss_batch)
 
-        if idx % K == 0:
-            G_loss_batch = train_G_batch(x)
-            G_loss.update(G_loss_batch)
+            if idx % K == 0:
+                G_loss_batch = train_G_batch(x)
+                G_loss.update(G_loss_batch)
 
-    print('[{}/{}]\tD: {}\tG: {}'.format(epoch, EPOCHS, D_loss.avg, G_loss.avg))
+        print('[{}/{}]\tD: {}\tG: {}'.format(epoch, EPOCHS, D_loss.avg, G_loss.avg))
 
-print('Saving models ...')
-torch.save(D.state_dict(), 'D.pth')
-torch.save(G.state_dict(), 'G.pth')
+    print('Saving models ...')
+    torch.save(D.state_dict(), 'D.pth')
+    torch.save(G.state_dict(), 'G.pth')
 
-print('Outputting example ...')
-generated = G(torch.randn(100, 100).cuda())
-save_image(generated.view(100, 1, 28, 28), 'sample.png')
+    print('Outputting example ...')
+    G = G.eval()
+    g = G(torch.randn(100, 100).cuda())
+    save_image((g.view(100, 1, 28, 28) + 1)/2, 'sample.png')
